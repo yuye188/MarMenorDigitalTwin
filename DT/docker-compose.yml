@@ -1,0 +1,34 @@
+services:
+  marmenordt:
+    build: 
+      context: ./app
+      dockerfile: Dockerfile
+    command: gunicorn --bind 0.0.0.0:3838 app:app
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - /home/thinking/raw/contaminantesData/:/app/contaminantesData
+      - /home/thinking/raw/SAIHdatasActualizados/Ramblas/:/app/Ramblas
+      - /home/thinking/raw/SAIHdatasActualizados/piezometros/:/app/piezometros
+      - /home/thinking/raw/salidaPredicciones/:/app/salidaPredicciones
+      - /home/thinking/raw/boyaSMLG/:/app/boyaSMLG
+      - /home/thinking/raw/3DGeojson/:/app/3DGeojson
+      - /home/thinking/raw/boyaUPCT/extractedData/:/app/extractedData
+      - /home/thinking/raw/aemet/:/app/aemet
+      #- .:/home/app
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - 80:80
+    depends_on:
+      - marmenordt
+
+#volumes:
+#  marmenor-shared-data:
+#    driver: local
+#    driver_opts:
+#       o: bind
+#       type: none
+#       device: /home/yu/Desktop/shared-data

@@ -1,0 +1,131 @@
+version: "3.8"
+services:
+ 
+  # Databases
+  mongo-db:
+    labels:
+      org.fiware: 'tutorial'
+    image: mongo:${MONGO_DB_VERSION}
+    hostname: mongo-db
+    container_name: db-mongo
+    expose:
+      - "${MONGO_DB_PORT}"
+    ports:
+      - "${MONGO_DB_PORT}:${MONGO_DB_PORT}" # localhost:27017
+    networks:
+      - default
+    volumes:
+      - mongo-db:/data/db
+      - mongo-config:/data/configdb
+    healthcheck:
+      test: |
+        host=`hostname --ip-address || echo '127.0.0.1'`; 
+        mongo --quiet $host/test --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 2)' && echo 0 || echo 1    
+      interval: 5s
+      
+  timescale-db:
+    image: timescale/timescaledb-postgis:${TIMESCALE_VERSION}
+    hostname: timescale-db
+    container_name: db-timescale
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U orion" ]
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    environment:
+      - POSTGRES_USER=orion
+      - POSTGRES_PASSWORD=orion
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    command: ["postgres", "-c", "log_statement=none"]
+    expose:
+      - "${TIMESCALE_PORT}"
+    ports:
+      - "${TIMESCALE_PORT}:${TIMESCALE_PORT}"
+    networks:
+      - default
+    volumes:
+      - timescale-db:/var/lib/postgresql/data
+    # Tutorial acts as a series of dummy IoT Sensors over HTTP
+
+  mintaka:
+    image: quay.io/fiware/mintaka:${MINTAKA_VERSION}
+    hostname: mintaka
+    container_name: fiware-mintaka
+    restart: always
+    depends_on:
+      - timescale-db
+    environment:
+      - DATASOURCES_DEFAULT_HOST=timescale-db
+      - DATASOURCES_DEFAULT_USERNAME=orion
+      - DATASOURCES_DEFAULT_PASSWORD=orion
+      - DATASOURCES_DEFAULT_DATABASE=orion
+      - DATASOURCES_DEFAULT_MAXIMUM_POOL_SIZE=2
+      - ENDPOINTS_INFO_ENABLED=true
+      - ENDPOINTS_INFO_SENSITIVE=false
+    expose:
+      - "${MINTAKA_PORT}"
+    ports:
+      - "${MINTAKA_PORT}:${MINTAKA_PORT}"
+    networks:
+      - default
+
+  orion:
+    labels:
+      org.fiware: 'tutorial'
+    platform: linux/amd64
+    image: quay.io/fiware/orion-ld:${ORION_LD_VERSION}
+    hostname: orion
+    container_name: fiware-orion
+    depends_on:
+      - mongo-db
+      - mintaka
+      - timescale-db
+    networks:
+      - default
+    ports:
+      - ${EXPOSED_PORT:-1026}:${ORION_LD_PORT:-1026} # localhost:1026
+    environment:
+      - ORIONLD_TROE=TRUE
+      - ORIONLD_TROE_USER=orion
+      - ORIONLD_TROE_PWD=orion
+      - ORIONLD_TROE_HOST=timescale-db
+      - ORIONLD_MONGO_HOST=mongo-db
+      - ORIONLD_MULTI_SERVICE=TRUE
+      - ORIONLD_DISABLE_FILE_LOG=TRUE
+    command: -dbhost mongo-db -logLevel DEBUG -forwarding -experimental
+    restart: always
+    healthcheck:
+      test: curl --fail -s http://orion:${ORION_LD_PORT}/version || exit 1
+      interval: 20s
+
+
+  # fuseki:
+  #   image: stain/jena-fuseki
+  #   ports:
+  #     - "3030:3030"
+  #   environment:
+  #     - FUSEKI_HOME=/jena-fuseki
+  #     - FUSEKI_BASE=/fuseki
+  #     - ADMIN_PASSWORD=admin
+  #   user: "root"
+
+networks:
+  default:
+    labels:
+      org.fiware: 'tutorial'
+    ipam:
+      config:
+        - subnet: 172.18.1.0/24
+
+volumes:
+  mongo-db: ~
+  mongo-config: ~
+  timescale-db: ~
+  data-models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data-models
+

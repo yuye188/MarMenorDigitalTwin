@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Mar Menor DT</title>
+
+  <!-- custome style.css and JS files-->
+  <link type="text/css" rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <script src="../static/jsFunc.js"></script>
+  <link rel="icon" type="image/x-icon" href="/static/favicon-32x32.png">
+
+  <!-- Jquery, Bootstraps and Plotly files-->
+
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Cesium.js"></script>
+
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.121/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <script src="https://sandcastle.cesium.com/Sandcastle-header.js"></script>
+
+
+  <script type="module">
+
+    // Your access token can be found at: https://ion.cesium.com/tokens.
+    // Replace `your_access_token` with your Cesium ion access token.
+
+
+    Cesium.Ion.defaultAccessToken = '{{ cesiumToken | safe}}';
+
+    // Initialize the Cesium Viewer in the HTML element with the `cesiumContainer` ID.
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      //imageryProvider: false,
+      //baseLayerPicker: false,
+      
+      
+      terrain: Cesium.Terrain.fromWorldTerrain({
+        requestWaterMask: true,
+        requestVertexNormals: true,
+      }),
+      
+      //timeline: false,
+      //animation: false,
+    });
+
+
+    // Fly the camera to San Francisco at the given longitude, latitude, and height.
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(-0.8196, 37.5, 7000),
+
+      orientation: {
+        //heading: Cesium.Math.toRadians(0.0),
+        pitch: Cesium.Math.toRadians(-15.0),
+      }
+    });
+
+    var geoson = JSON.parse('{{ jsonObjs[0] | tojson | safe}}');
+    var caudalLine = JSON.parse('{{ jsonObjs[1] | tojson | safe}}');
+    viewer.dataSources.add(Cesium.GeoJsonDataSource.load(geoson));
+
+    viewer.dataSources.add(Cesium.GeoJsonDataSource.load(caudalLine, {
+      stroke: Cesium.Color.AQUA,
+      fill: Cesium.Color.AQUA,
+      strokeWidth: 30
+    }));
+
+    // Disable camera collision to allow it to go underground
+    viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
+
+
+
+    const scene = viewer.scene;
+    scene.globe.enableLighting = true;
+
+    const scratchIcrfToFixed = new Cesium.Matrix3();
+    const scratchMoonPosition = new Cesium.Cartesian3();
+    const scratchMoonDirection = new Cesium.Cartesian3();
+
+    function getMoonDirection(result) {
+      result = Cesium.defined(result) ? result : new Cesium.Cartesian3();
+      const icrfToFixed = scratchIcrfToFixed;
+      const date = viewer.clock.currentTime;
+      if (
+        !Cesium.defined(
+          Cesium.Transforms.computeIcrfToFixedMatrix(date, icrfToFixed)
+        )
+      ) {
+        Cesium.Transforms.computeTemeToPseudoFixedMatrix(date, icrfToFixed);
+      }
+      const moonPosition = Cesium.Simon1994PlanetaryPositions.computeMoonPositionInEarthInertialFrame(
+        date,
+        scratchMoonPosition
+      );
+      Cesium.Matrix3.multiplyByVector(
+        icrfToFixed,
+        moonPosition,
+        moonPosition
+      );
+      const moonDirection = Cesium.Cartesian3.normalize(
+        moonPosition,
+        scratchMoonDirection
+      );
+      return Cesium.Cartesian3.negate(moonDirection, result);
+    }
+
+    const directionalLight = new Cesium.DirectionalLight({
+      direction: new Cesium.Cartesian3(
+        0.2454278300540191,
+        0.8842635425193919,
+        0.39729481195458805
+      ),
+    });
+
+    const flashlight = new Cesium.DirectionalLight({
+      direction: scene.camera.directionWC, // Updated every frame
+    });
+
+    const moonLight = new Cesium.DirectionalLight({
+      direction: getMoonDirection(), // Updated every frame
+      color: new Cesium.Color(0.9, 0.925, 1.0),
+      intensity: 0.5,
+    });
+
+    const sunLight = new Cesium.SunLight();
+
+    scene.preRender.addEventListener(function (scene, time) {
+      if (scene.light === flashlight) {
+        scene.light.direction = Cesium.Cartesian3.clone(
+          scene.camera.directionWC,
+          scene.light.direction
+        );
+      } else if (scene.light === moonLight) {
+        scene.light.direction = getMoonDirection(scene.light.direction);
+      }
+    });
+
+    function setTime(iso8601) {
+      const currentTime = Cesium.JulianDate.fromIso8601(iso8601);
+      const endTime = Cesium.JulianDate.addDays(
+        currentTime,
+        2,
+        new Cesium.JulianDate()
+      );
+
+      viewer.clock.currentTime = currentTime;
+      viewer.timeline.zoomTo(currentTime, endTime);
+    }
+
+    function reset() {
+      // Set scene defaults
+      scene.light = sunLight;
+      scene.globe.dynamicAtmosphereLighting = true;
+      scene.globe.dynamicAtmosphereLightingFromSun = false;
+      //setTime("2020-01-09T23:00:39.018261982600961346Z");
+    }
+
+    viewer.scene.camera.setView({
+      destination: new Cesium.Cartesian3(
+        -2729490.8390059783,
+        -4206389.878855597,
+        3928671.2763356343
+      ),
+      orientation: new Cesium.HeadingPitchRoll(
+        2.2482480507178426,
+        -0.20084951548781982,
+        0.002593933673552762
+      ),
+      endTransform: Cesium.Matrix4.IDENTITY,
+    });
+
+    const options = [
+      {
+        text: "Sunlight",
+        onselect: function () {
+          reset();
+        },
+      },
+      {
+        text: "Fixed lighting",
+        onselect: function () {
+          reset();
+          scene.light = directionalLight;
+        },
+      },
+      {
+        text: "Flashlight",
+        onselect: function () {
+          reset();
+          scene.light = flashlight;
+          scene.globe.dynamicAtmosphereLighting = false;
+        },
+      },
+      {
+        text: "Moonlight",
+        onselect: function () {
+          reset();
+          scene.light = moonLight;
+          scene.globe.dynamicAtmosphereLightingFromSun = true;
+          //setTime("2020-01-09T23:00:39.018261982600961346Z");
+        },
+      }
+    ];
+
+    Sandcastle.addToolbarMenu(options, 'toolbarLight');
+
+
+    // weather effects
+    scene.globe.depthTestAgainstTerrain = true;
+
+    const resetCameraFunction = function () {
+      scene.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(-0.8196, 37.5, 7000),
+        orientation: {
+          pitch: Cesium.Math.toRadians(-15.0),
+        }
+      });
+    };
+    resetCameraFunction();
+
+    // snow
+    const snowParticleSize = 12.0;
+    const snowRadius = 100000.0;
+    const minimumSnowImageSize = new Cesium.Cartesian2(
+      snowParticleSize,
+      snowParticleSize
+    );
+    const maximumSnowImageSize = new Cesium.Cartesian2(
+      snowParticleSize * 2.0,
+      snowParticleSize * 2.0
+    );
+    let snowGravityScratch = new Cesium.Cartesian3();
+    const snowUpdate = function (particle, dt) {
+      snowGravityScratch = Cesium.Cartesian3.normalize(
+        particle.position,
+        snowGravityScratch
+      );
+      Cesium.Cartesian3.multiplyByScalar(
+        snowGravityScratch,
+        Cesium.Math.randomBetween(-30.0, -300.0),
+        snowGravityScratch
+      );
+      particle.velocity = Cesium.Cartesian3.add(
+        particle.velocity,
+        snowGravityScratch,
+        particle.velocity
+      );
+      const distance = Cesium.Cartesian3.distance(
+        scene.camera.position,
+        particle.position
+      );
+      if (distance > snowRadius) {
+        particle.endColor.alpha = 0.0;
+      } else {
+        particle.endColor.alpha = 1.0 / (distance / snowRadius + 0.1);
+      }
+    };
+
+    // rain
+    const rainParticleSize = 15.0;
+    const rainRadius = 100000.0;
+    const rainImageSize = new Cesium.Cartesian2(
+      rainParticleSize,
+      rainParticleSize * 2.0
+    );
+    let rainGravityScratch = new Cesium.Cartesian3();
+    const rainUpdate = function (particle, dt) {
+      rainGravityScratch = Cesium.Cartesian3.normalize(
+        particle.position,
+        rainGravityScratch
+      );
+      rainGravityScratch = Cesium.Cartesian3.multiplyByScalar(
+        rainGravityScratch,
+        -1050.0,
+        rainGravityScratch
+      );
+
+      particle.position = Cesium.Cartesian3.add(
+        particle.position,
+        rainGravityScratch,
+        particle.position
+      );
+
+      const distance = Cesium.Cartesian3.distance(
+        scene.camera.position,
+        particle.position
+      );
+      if (distance > rainRadius) {
+        particle.endColor.alpha = 0.0;
+      } else {
+        particle.endColor.alpha =
+          Cesium.Color.BLUE.alpha / (distance / rainRadius + 0.1);
+      }
+    };
+
+
+
+    function startSnow() {
+      //console.log('Starting snow...')
+      scene.primitives.removeAll();
+      scene.primitives.add(
+        new Cesium.ParticleSystem({
+          modelMatrix: new Cesium.Matrix4.fromTranslation(
+            scene.camera.position
+          ),
+          minimumSpeed: -1.0,
+          maximumSpeed: 0.0,
+          lifetime: 5.0,
+          emitter: new Cesium.SphereEmitter(snowRadius),
+          startScale: 0.5,
+          endScale: 1.0,
+          image: "../static/snowflake_particle.png",
+          emissionRate: 3000.0,
+          startColor: Cesium.Color.WHITE.withAlpha(0.0),
+          endColor: Cesium.Color.WHITE.withAlpha(1.0),
+          minimumImageSize: minimumSnowImageSize,
+          maximumImageSize: maximumSnowImageSize,
+          updateCallback: snowUpdate,
+        })
+      );
+
+      //scene.skyAtmosphere.hueShift = -0.8;
+      //scene.skyAtmosphere.saturationShift = -0.7;
+      //scene.skyAtmosphere.brightnessShift = -0.33;
+      //scene.fog.density = 0.001;
+      //scene.fog.minimumBrightness = 0.8;
+    }
+
+    function startRain() {
+
+      scene.primitives.removeAll();
+      //console.log('starting rain...')
+      scene.primitives.add(
+        new Cesium.ParticleSystem({
+          modelMatrix: new Cesium.Matrix4.fromTranslation(
+            scene.camera.position
+          ),
+          speed: -1.0,
+          lifetime: 5.0,
+          emitter: new Cesium.SphereEmitter(rainRadius),
+          startScale: 1.0,
+          endScale: 0.0,
+          image: "../static/circular_particle.png",
+          emissionRate: 3000.0,
+          startColor: new Cesium.Color(0.27, 0.5, 0.7, 0.0),
+          endColor: new Cesium.Color(0.27, 0.5, 0.7, 0.98),
+          imageSize: rainImageSize,
+          updateCallback: rainUpdate,
+        })
+      );
+
+      //scene.skyAtmosphere.hueShift = -0.97;
+      //scene.skyAtmosphere.saturationShift = 0.25;
+      //scene.skyAtmosphere.brightnessShift = -0.4;
+      //scene.fog.density = 0.00025;
+      //scene.fog.minimumBrightness = 0.01;
+    }
+
+    // drop down
+    const optionsWeather = [
+      {
+        text: "Snow",
+        onselect: startSnow,
+      },
+      {
+        text: "Rain",
+        onselect: startRain,
+      },
+    ];
+
+    const resetWeather = function () {
+      scene.primitives.removeAll()
+    };
+    resetWeather();
+
+    // button
+    Sandcastle.addToolbarButton("Reset Camera", resetCameraFunction, "toolbarLight");
+    //Sandcastle.addToolbarMenu(optionsWeather, 'toolbarWeather');
+    startRain()
+
+  </script>
+
+</head>
+
+
+<body style="background-color: rgb(246, 252, 250);">
+
+  <!-- Title in the page -->
+  <div class="container-fluid p-5 text-center">
+    <div class="jumbotron" style="background-color: rgb(221, 255, 243);">
+      <h1 class="font-weight-bold">Mar Menor DT</h1>
+      <hr class="new5" />
+      <p class="font-weight-lighter">A Digital Twin of Mar Menor.</p>
+    </div>
+  </div>
+
+
+  <!-- Content -->
+  <div class="container-fluid p-2">
+
+    <!-- MAP -->
+
+    <div class="container">
+      <div class="alert alert-primary" role="alert">
+        <h2 class="text-center font-weight-bold alert-heading">3D real-time Map</h2>
+      </div>
+
+    </div>
+    <div style="text-align: center;" id="toolbarLight"></div>
+    <div style='height:800px;width: 80%; margin: auto; padding-bottom: 100px;' id="cesiumContainer"></div>
+
+
+    <!-- MAP -->
+    <div class="container">
+      <div class="alert alert-primary" role="alert">
+        <h2 class="text-center font-weight-bold alert-heading">2D data/models Map</h2>
+        <hr class="new5" />
+        <p class="text-center">The latest (temporary) data have a duration of 7 days and are pending validation.</p>
+      </div>
+
+    </div>
+    <div style='height:800px;width: 80%; margin: auto; padding-bottom: 100px;'>{{ aqimap | safe}}</div>
+
+
+
+
+    <!-- Historic data -->
+    <div class="container">
+      <h2 class="text-center font-weight-bold alert alert-primary">Historical Data</h2>
+      <div style="text-align: center; padding-top: 20px;">
+
+        <!-- Dates -->
+        <div class="row">
+          <div class="col mb-4">
+            <label for="start">Start date:</label>
+
+            <input type="datetime-local" id="start" value={{fechaMaxDiaAnterior}} max={{fechaMax}}>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col mb-4">
+            <label for="end">End date: </label>
+
+            <input type="datetime-local" id="end" value={{fechaMax}} max={{fechaMax}}>
+          </div>
+        </div>
+
+        <div id="airStationsChart" class="Chart mb-4" hidden="True"></div>
+
+        <!-- Sinqlair select -->
+        <div class="row">
+          <div class="col mb-4">
+            <label>Sinqlair Stations:</label>
+            <select id="ficherosSinqlair-select">
+              {% for f in ficherosSinqlair %}
+              <option value="{{f}}">{{f}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col mb-4">
+            <input type="button" value="Select Sinqlair Station" class="btn btn-info" onclick="selectData(1)">
+          </div>
+        </div>
+
+        <!-- Piezometros select -->
+        <div class="row">
+          <div class="col mb-4">
+            <label>Piezometers:</label>
+            <select id="ficherosPiezometros-select">
+              {% for f in ficherosPiezometros %}
+              <option value="{{f}}">{{f}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col mb-4">
+            <input type="button" value="Select Piezometer" class="btn btn-info" onclick="selectData(2)">
+          </div>
+        </div>
+
+        <!-- Ramblas select -->
+        <div class="row">
+          <div class="col mb-4">
+            <label>Catchments:</label>
+            <select id="ficherosRamblas-select">
+              {% for f in ficherosRamblas %}
+              <option value="{{f}}">{{f}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col"><input type="button" value="Select Catchment" class="btn btn-info" onclick="selectData(3)">
+          </div>
+        </div>
+
+
+
+
+
+
+      </div>
+    </div>
+
+
+  </div>
+
+  <!-- Footer -->
+  <footer class="container mt-5">
+    <p class="text-center">&copy; Mar Menor DT <br>(Department of Information and Communication Engineering, Computer
+      Sciences Faculty, University of Murcia, Spain)</p>
+  </footer>
+
+
+  <!-- Offcanvas component for latet's data -->
+  <div class="offcanvas offcanvas-bottom h-75" tabindex="-1" id="offcanvasBottom"
+    aria-labelledby="offcanvasBottomLabel">
+    <div class="offcanvas-body">
+      <!-- Default dropend button -->
+      <div class="text-center mt-5" id="loading" hidden='True'>
+        <strong>Loading...</strong>
+        <div class="spinner-border" role="status">
+        </div>
+      </div>
+      <div id="latestData" class="ChartCanvas"></div>
+      <div id="predictionData" class="ChartCanvas"></div>
+    </div>
+  </div>
+
+</body>
+
+
+
+
+</html>
