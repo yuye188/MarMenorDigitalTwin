@@ -7,3 +7,4 @@ The structure of this repository is organized as follows:
 * ```DT```: Digital twin implementation and stored data.
 * ```orion-mongo/marMenorDockerCompose```: FIWARE implementation for data interoperability.
 * ```scripts```: Scripts to retrieve data from different sources.
+* ```Data```: Data used in the DT.
